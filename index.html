@@ -21,6 +21,10 @@
   select { background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); background-repeat:no-repeat; background-position:right .5rem center; background-size:1.2em; padding-right:2.2rem; }
   .spinner { width:20px; height:20px; border:2px solid #e2e8f0; border-top-color:#002d72; border-radius:50%; animation:spin .6s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  .card-item[draggable="true"] { cursor: grab; }
+  .card-item[draggable="true"]:active { cursor: grabbing; }
+  .card-item.dragging { opacity: 0.35; transform: scale(0.97); box-shadow: none; }
+  .kanban-col.drop-over { outline: 2px dashed #3b82f6; outline-offset: 2px; border-radius: 0.75rem; background-color: rgba(59,130,246,0.06); }
 </style>
 </head>
 <body class="min-h-screen pb-16">
@@ -332,9 +336,15 @@ function renderKanban() {
         <span class="text-xs font-black uppercase tracking-wider text-slate-500">${col.icon} ${col.label}</span>
         <span class="badge ${col.badge}">${cards.length}</span>
       </div>
-      <div class="space-y-3 min-h-[60px]">
+      <div class="kanban-col space-y-3 min-h-[60px]"
+           ondragover="kanbanDragOver(event)"
+           ondragleave="kanbanDragLeave(event)"
+           ondrop="kanbanDrop(event,'${col.id}')">
         ${cards.map(c => `
-        <div class="card-item bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div class="card-item bg-white border border-slate-200 rounded-xl p-4 shadow-sm"
+             draggable="true"
+             ondragstart="kanbanDragStart(event,'${c.id}')"
+             ondragend="kanbanDragEnd(event)">
           <div class="flex items-start justify-between gap-2 mb-2">
             <p class="text-sm font-semibold text-slate-800 leading-snug flex-1">${esc(c.titulo)}</p>
             <div class="flex gap-1 flex-shrink-0">
@@ -534,6 +544,53 @@ function renderLogs(logs) {
 window.filterLogs = function() {
   const f = document.getElementById('log-filter').value;
   renderLogs(f==='todos' ? allLogs : allLogs.filter(l => l.tipo===f));
+};
+
+// ── Drag & Drop Kanban ────────────────────────────────────────────────────────
+let dragCardId = null;
+
+window.kanbanDragStart = function(e, cardId) {
+  dragCardId = cardId;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', cardId);
+  setTimeout(() => e.target.closest('.card-item')?.classList.add('dragging'), 0);
+};
+
+window.kanbanDragEnd = function(e) {
+  e.target.closest('.card-item')?.classList.remove('dragging');
+  document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drop-over'));
+};
+
+window.kanbanDragOver = function(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drop-over');
+};
+
+window.kanbanDragLeave = function(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    e.currentTarget.classList.remove('drop-over');
+  }
+};
+
+window.kanbanDrop = async function(e, colId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drop-over');
+  const id = dragCardId || e.dataTransfer.getData('text/plain');
+  dragCardId = null;
+  if (!id) return;
+  const card = allCards.find(c => c.id === id);
+  if (!card || card.status === colId) return;
+  const oldStatus = card.status;
+  try {
+    await updateDoc(doc(db,'hub_roadmap',id), {
+      status: colId,
+      atualizado_por: currentUser.name,
+      atualizado_por_email: currentUser.email,
+      atualizado_em: serverTimestamp()
+    });
+    await addLog('roadmap','editou',id,card.titulo,'status',oldStatus,colId);
+  } catch(err) { alert('Erro ao mover card: '+err.message); }
 };
 
 // ── Listeners realtime ────────────────────────────────────────────────────────
